@@ -1,0 +1,14 @@
+version: '3.8'
+
+services:
+  dashboard:
+    build: .
+    container_name: mikrotik-dashboard
+    restart: unless-stopped
+    ports:
+      - "1999:1999"
+    env_file:
+      - .env
+    cap_add:
+      - NET_RAW
+

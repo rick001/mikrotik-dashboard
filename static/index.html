@@ -1,0 +1,937 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>KOL-LB · Network Dashboard</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<style>
+:root {
+  --bg:         #0d1117;
+  --surface:    #161b22;
+  --surface-2:  #21262d;
+  --border:     #30363d;
+  --text:       #e6edf3;
+  --muted:      #7d8590;
+  --green:      #3fb950;
+  --red:        #f85149;
+  --blue:       #58a6ff;
+  --purple:     #bc8cff;
+  --orange:     #e3b341;
+  --teal:       #39d353;
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  font-size: 13px;
+  line-height: 1.5;
+  min-height: 100vh;
+  padding: 20px 24px 32px;
+}
+
+/* ── Header ───────────────────────────────────────────── */
+header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 28px;
+  padding-bottom: 18px;
+  border-bottom: 1px solid var(--border);
+}
+
+.logo { display: flex; align-items: center; gap: 12px; }
+
+.logo-icon {
+  width: 38px; height: 38px;
+  background: linear-gradient(135deg, rgba(88,166,255,.15), rgba(63,185,80,.1));
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  display: grid; place-items: center;
+  font-size: 19px;
+}
+
+.logo h1 { font-size: 17px; font-weight: 600; letter-spacing: -.3px; }
+.logo .sub { font-size: 11px; color: var(--muted); margin-top: 2px; }
+
+.header-right { display: flex; align-items: center; gap: 14px; }
+
+.live-pill {
+  display: flex; align-items: center; gap: 6px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  padding: 4px 12px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: .4px;
+  color: var(--muted);
+}
+
+.live-dot {
+  width: 6px; height: 6px;
+  background: var(--green);
+  border-radius: 50%;
+  animation: blink 2s ease-in-out infinite;
+}
+
+#last-updated { font-size: 11px; color: var(--muted); }
+
+/* ── Layout helpers ───────────────────────────────────── */
+.g4 { display: grid; grid-template-columns: repeat(4,1fr); gap: 14px; margin-bottom: 14px; }
+.g2 { display: grid; grid-template-columns: 1fr 1fr;       gap: 14px; margin-bottom: 14px; }
+.g5 { display: grid; grid-template-columns: repeat(5,1fr); gap: 14px; margin-bottom: 14px; }
+.g1 { margin-bottom: 14px; }
+
+/* ── Card ─────────────────────────────────────────────── */
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 16px;
+  position: relative;
+  overflow: hidden;
+  transition: border-color .2s;
+}
+
+.card:hover { border-color: #484f58; }
+
+/* top shimmer line */
+.card::after {
+  content: '';
+  position: absolute; top: 0; left: 0; right: 0; height: 1px;
+  background: linear-gradient(90deg, transparent 0%, rgba(255,255,255,.06) 50%, transparent 100%);
+}
+
+.label {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: var(--muted);
+  margin-bottom: 10px;
+}
+
+.section-label {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: var(--muted);
+  margin: 6px 0 10px;
+  display: flex; align-items: center; gap: 8px;
+}
+
+.section-label::after {
+  content: '';
+  flex: 1; height: 1px;
+  background: var(--border);
+}
+
+/* ── Status badge ─────────────────────────────────────── */
+.badge {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 3px 9px;
+  border-radius: 20px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .5px;
+  text-transform: uppercase;
+}
+
+.badge-up   { background: rgba(63,185,80,.12);  color: var(--green);  border: 1px solid rgba(63,185,80,.3); }
+.badge-down { background: rgba(248,81,73,.12);  color: var(--red);    border: 1px solid rgba(248,81,73,.3); }
+.badge-unk  { background: rgba(125,133,144,.1); color: var(--muted);  border: 1px solid var(--border); }
+
+.badge-dot { width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
+.badge-up .badge-dot { animation: blink 2s ease-in-out infinite; }
+
+/* ── WAN status cards ─────────────────────────────────── */
+.wan-card-title { font-size: 13px; font-weight: 600; margin-bottom: 8px; }
+.wan-since { font-size: 11px; color: var(--muted); margin-top: 6px; }
+.wan-host  { font-size: 10px; color: var(--border); margin-top: 3px; font-family: monospace; }
+
+.wan-meta { margin-top: 10px; display: flex; flex-direction: column; gap: 4px; }
+.wan-meta-row { display: flex; align-items: center; justify-content: space-between; }
+.wan-meta-label { font-size: 10px; color: var(--muted); }
+.wan-meta-val   { font-size: 11px; font-weight: 600; color: var(--text); font-family: monospace; }
+.wan-latency    { color: var(--green); }
+.wan-ip         { color: var(--blue); }
+
+/* ── PCC Distribution ─────────────────────────────────── */
+.pcc-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+
+.pcc-wan { }
+.pcc-name { font-size: 11px; font-weight: 600; margin-bottom: 6px; }
+.pcc-bar-bg { height: 6px; background: var(--surface-2); border-radius: 3px; overflow: hidden; margin-bottom: 5px; }
+.pcc-bar-fill { height: 100%; border-radius: 3px; transition: width .6s ease; }
+.pcc-bar-fill.w1 { background: var(--blue); }
+.pcc-bar-fill.w2 { background: var(--green); }
+.pcc-meta { display: flex; justify-content: space-between; }
+.pcc-pct  { font-size: 18px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.pcc-pct.w1 { color: var(--blue); }
+.pcc-pct.w2 { color: var(--green); }
+.pcc-conns { font-size: 10px; color: var(--muted); align-self: flex-end; }
+
+/* ── Failover events ──────────────────────────────────── */
+.event-table { width: 100%; border-collapse: collapse; }
+.event-table td { padding: 7px 4px; border-bottom: 1px solid var(--border); font-size: 11px; vertical-align: middle; }
+.event-table tr:last-child td { border-bottom: none; }
+.evt-time { color: var(--muted); font-family: monospace; white-space: nowrap; width: 70px; }
+.evt-msg  { color: var(--text); }
+.evt-down { color: var(--red); }
+.evt-up   { color: var(--green); }
+.no-events { color: var(--muted); font-size: 11px; text-align: center; padding: 16px; }
+
+/* ── Traffic cards ────────────────────────────────────── */
+.iface-header {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 14px;
+}
+
+.iface-name { font-size: 12px; font-weight: 600; }
+
+.speeds { display: flex; gap: 24px; margin-bottom: 10px; }
+
+.speed-block .spd-label {
+  font-size: 9px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: .8px;
+  color: var(--muted); margin-bottom: 3px;
+}
+
+.spd-val {
+  font-size: 24px; font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
+.spd-val.rx { color: var(--blue); }
+.spd-val.tx { color: var(--purple); }
+
+.spd-unit {
+  font-size: 11px; font-weight: 400;
+  color: var(--muted); margin-left: 2px;
+}
+
+.session-row {
+  display: flex; gap: 18px;
+  margin-bottom: 8px;
+}
+
+.sess-item { font-size: 10px; color: var(--muted); }
+.sess-item b { color: var(--text); font-weight: 500; }
+
+.totals-row {
+  display: flex; gap: 18px;
+  margin-bottom: 12px;
+  padding: 7px 10px;
+  background: var(--surface-2);
+  border-radius: 8px;
+  border: 1px solid var(--border);
+}
+
+.total-item { font-size: 10px; color: var(--muted); }
+.total-item b { color: var(--teal); font-weight: 600; }
+
+.spark { height: 56px; }
+
+/* ── Gauge ────────────────────────────────────────────── */
+.gauge-wrap {
+  position: relative; width: 84px; height: 84px;
+  margin: 6px auto 4px;
+}
+
+.gauge-center {
+  position: absolute; inset: 0;
+  display: grid; place-items: center;
+  font-size: 15px; font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.gauge-sub { text-align: center; font-size: 10px; color: var(--muted); margin-top: 2px; }
+
+/* ── Temp ─────────────────────────────────────────────── */
+.temp-big {
+  font-size: 38px; font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--orange); margin-top: 14px; line-height: 1;
+}
+
+.temp-big .unit { font-size: 18px; font-weight: 400; color: var(--muted); }
+.temp-status { font-size: 11px; color: var(--muted); margin-top: 8px; }
+
+/* ── Clients ──────────────────────────────────────────── */
+.big-num {
+  font-size: 46px; font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  line-height: 1; margin-top: 8px;
+}
+
+/* ── Disk ─────────────────────────────────────────────── */
+.disk-free  { font-size: 22px; font-weight: 700; margin-top: 10px; }
+.disk-of    { font-size: 10px; color: var(--muted); margin-top: 3px; }
+.disk-bar-bg {
+  height: 4px; background: var(--surface-2);
+  border-radius: 2px; overflow: hidden; margin-top: 14px;
+}
+.disk-bar-fill { height: 100%; border-radius: 2px; transition: width .6s ease; background: var(--green); }
+
+/* ── Uptime ───────────────────────────────────────────── */
+.uptime-val {
+  font-size: 20px; font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  margin-top: 4px; line-height: 1.3;
+}
+
+.board-tag {
+  display: inline-block;
+  margin-top: 10px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 2px 8px;
+  font-size: 10px;
+  color: var(--muted);
+  font-family: monospace;
+}
+
+/* ── Combined chart ───────────────────────────────────── */
+.chart-legend { display: flex; gap: 16px; margin-bottom: 10px; }
+.leg-item { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--muted); }
+.leg-dot  { width: 8px; height: 3px; border-radius: 2px; }
+.big-chart { height: 150px; }
+
+/* ── Primary WAN ──────────────────────────────────────── */
+.primary-val {
+  font-size: 15px; font-weight: 600;
+  margin-top: 6px; line-height: 1.4;
+}
+
+/* ── Animations ───────────────────────────────────────── */
+@keyframes blink {
+  0%,100% { opacity: 1; }
+  50%      { opacity: .35; }
+}
+
+/* ── Loader ───────────────────────────────────────────── */
+#loader {
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  height: 60vh; gap: 16px; color: var(--muted);
+}
+
+.spinner {
+  width: 28px; height: 28px;
+  border: 2px solid var(--border);
+  border-top-color: var(--blue);
+  border-radius: 50%;
+  animation: spin .8s linear infinite;
+}
+
+@keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">
+    <div class="logo-icon">🌐</div>
+    <div>
+      <h1 id="hdr-board">Network Dashboard</h1>
+      <div class="sub" id="hdr-ver">Connecting…</div>
+    </div>
+  </div>
+  <div class="header-right">
+    <span id="last-updated"></span>
+    <div class="live-pill"><div class="live-dot"></div>LIVE</div>
+  </div>
+</header>
+
+<div id="loader">
+  <div class="spinner"></div>
+  <span>Connecting to MikroTik…</span>
+</div>
+
+<div id="dash" style="display:none">
+
+  <!-- WAN Status row -->
+  <div class="section-label">WAN Status</div>
+  <div class="g4">
+
+    <div class="card">
+      <div class="label">WAN1 · SSWL</div>
+      <div id="w1-badge" class="badge badge-unk"><span class="badge-dot"></span>—</div>
+      <div class="wan-since" id="w1-since">—</div>
+      <div class="wan-meta">
+        <div class="wan-meta-row">
+          <span class="wan-meta-label">ISP IP</span>
+          <span class="wan-meta-val wan-ip" id="w1-ip">—</span>
+        </div>
+        <div class="wan-meta-row">
+          <span class="wan-meta-label">Gateway ping</span>
+          <span class="wan-meta-val wan-latency" id="w1-rtt">—</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="label">WAN2 · JIO</div>
+      <div id="w2-badge" class="badge badge-unk"><span class="badge-dot"></span>—</div>
+      <div class="wan-since" id="w2-since">—</div>
+      <div class="wan-meta">
+        <div class="wan-meta-row">
+          <span class="wan-meta-label">ISP IP</span>
+          <span class="wan-meta-val wan-ip" id="w2-ip">—</span>
+        </div>
+        <div class="wan-meta-row">
+          <span class="wan-meta-label">Gateway ping</span>
+          <span class="wan-meta-val wan-latency" id="w2-rtt">—</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="label">Active Route</div>
+      <div class="primary-val" id="primary-wan">—</div>
+      <div class="wan-since">Default Gateway</div>
+    </div>
+
+    <div class="card">
+      <div class="label">Router Uptime</div>
+      <div class="uptime-val" id="uptime">—</div>
+      <div id="board-tag" class="board-tag">RB750Gr3</div>
+    </div>
+
+  </div>
+
+  <!-- Interface Traffic -->
+  <div class="section-label">Interface Traffic</div>
+  <div class="g2">
+
+    <div class="card">
+      <div class="iface-header">
+        <div class="iface-name">ether1 · WAN1 SSWL</div>
+        <div id="e1-badge" class="badge badge-unk"><span class="badge-dot"></span>—</div>
+      </div>
+      <div class="speeds">
+        <div class="speed-block">
+          <div class="spd-label">↓ Download</div>
+          <div class="spd-val rx" id="e1-rx">0.0<span class="spd-unit">Mbps</span></div>
+        </div>
+        <div class="speed-block">
+          <div class="spd-label">↑ Upload</div>
+          <div class="spd-val tx" id="e1-tx">0.0<span class="spd-unit">Mbps</span></div>
+        </div>
+      </div>
+      <div class="session-row">
+        <div class="sess-item">↓ Session: <b id="e1-srx">—</b></div>
+        <div class="sess-item">↑ Session: <b id="e1-stx">—</b></div>
+      </div>
+      <div class="totals-row">
+        <div class="total-item">↓ Total (boot): <b id="e1-trx">—</b></div>
+        <div class="total-item">↑ Total (boot): <b id="e1-ttx">—</b></div>
+      </div>
+      <div class="spark"><canvas id="c-e1"></canvas></div>
+    </div>
+
+    <div class="card">
+      <div class="iface-header">
+        <div class="iface-name">ether2 · WAN2 JIO</div>
+        <div id="e2-badge" class="badge badge-unk"><span class="badge-dot"></span>—</div>
+      </div>
+      <div class="speeds">
+        <div class="speed-block">
+          <div class="spd-label">↓ Download</div>
+          <div class="spd-val rx" id="e2-rx">0.0<span class="spd-unit">Mbps</span></div>
+        </div>
+        <div class="speed-block">
+          <div class="spd-label">↑ Upload</div>
+          <div class="spd-val tx" id="e2-tx">0.0<span class="spd-unit">Mbps</span></div>
+        </div>
+      </div>
+      <div class="session-row">
+        <div class="sess-item">↓ Session: <b id="e2-srx">—</b></div>
+        <div class="sess-item">↑ Session: <b id="e2-stx">—</b></div>
+      </div>
+      <div class="totals-row">
+        <div class="total-item">↓ Total (boot): <b id="e2-trx">—</b></div>
+        <div class="total-item">↑ Total (boot): <b id="e2-ttx">—</b></div>
+      </div>
+      <div class="spark"><canvas id="c-e2"></canvas></div>
+    </div>
+
+  </div>
+
+  <!-- PCC Distribution + Failover Events -->
+  <div class="g2">
+
+    <div class="card">
+      <div class="label" style="margin-bottom:14px">PCC Load Distribution</div>
+      <div class="pcc-grid">
+        <div class="pcc-wan">
+          <div class="pcc-name">WAN1 · SSWL</div>
+          <div class="pcc-bar-bg"><div class="pcc-bar-fill w1" id="pcc-bar-w1" style="width:50%"></div></div>
+          <div class="pcc-meta">
+            <div class="pcc-pct w1" id="pcc-pct-w1">—</div>
+            <div class="pcc-conns" id="conn-w1">— active</div>
+          </div>
+        </div>
+        <div class="pcc-wan">
+          <div class="pcc-name">WAN2 · JIO</div>
+          <div class="pcc-bar-bg"><div class="pcc-bar-fill w2" id="pcc-bar-w2" style="width:50%"></div></div>
+          <div class="pcc-meta">
+            <div class="pcc-pct w2" id="pcc-pct-w2">—</div>
+            <div class="pcc-conns" id="conn-w2">— active</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="label" style="margin-bottom:12px">Failover Events</div>
+      <div id="failover-body">
+        <div class="no-events">No failover events recorded</div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Connection Sessions -->
+  <div class="section-label">Connection Sessions</div>
+  <div class="g4">
+    <div class="card" style="text-align:center">
+      <div class="label">TCP Sessions</div>
+      <div class="big-num" id="sess-tcp" style="font-size:36px;color:var(--blue)">—</div>
+    </div>
+    <div class="card" style="text-align:center">
+      <div class="label">UDP Sessions</div>
+      <div class="big-num" id="sess-udp" style="font-size:36px;color:var(--purple)">—</div>
+    </div>
+    <div class="card" style="text-align:center">
+      <div class="label">Established</div>
+      <div class="big-num" id="sess-est" style="font-size:36px;color:var(--green)">—</div>
+    </div>
+    <div class="card" style="text-align:center">
+      <div class="label">New / sec</div>
+      <div class="big-num" id="sess-new" style="font-size:36px;color:var(--orange)">—</div>
+    </div>
+  </div>
+
+  <!-- System Health -->
+  <div class="section-label">System Health</div>
+  <div class="g5">
+
+    <div class="card" style="text-align:center">
+      <div class="label">CPU Load</div>
+      <div class="gauge-wrap"><canvas id="c-cpu"></canvas><div class="gauge-center" id="cpu-val">0%</div></div>
+      <div class="gauge-sub" id="cpu-freq">—</div>
+    </div>
+
+    <div class="card" style="text-align:center">
+      <div class="label">Memory</div>
+      <div class="gauge-wrap"><canvas id="c-ram"></canvas><div class="gauge-center" id="ram-val">0%</div></div>
+      <div class="gauge-sub" id="ram-detail">—</div>
+    </div>
+
+    <div class="card" style="text-align:center">
+      <div class="label">Temperature</div>
+      <div class="temp-big"><span id="temp-val">—</span><span class="unit"> °C</span></div>
+      <div class="temp-status" id="temp-status">—</div>
+    </div>
+
+    <div class="card" style="text-align:center">
+      <div class="label">Active Clients</div>
+      <div class="big-num" id="client-count">—</div>
+      <div style="font-size:10px;color:var(--muted);margin-top:6px;">DHCP leases</div>
+    </div>
+
+    <div class="card">
+      <div class="label">Storage</div>
+      <div class="disk-free" id="disk-free">—</div>
+      <div class="disk-of" id="disk-of">—</div>
+      <div class="disk-bar-bg">
+        <div class="disk-bar-fill" id="disk-bar" style="width:0%"></div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Combined throughput -->
+  <div class="section-label">Combined Throughput · Last 5 min</div>
+  <div class="card g1">
+    <div class="chart-legend">
+      <div class="leg-item"><div class="leg-dot" style="background:var(--blue)"></div>Download</div>
+      <div class="leg-item"><div class="leg-dot" style="background:var(--purple)"></div>Upload</div>
+    </div>
+    <div class="big-chart"><canvas id="c-combined"></canvas></div>
+  </div>
+
+</div><!-- #dash -->
+
+<script>
+// ── Chart instances ────────────────────────────────────────────────────────
+let cE1, cE2, cCpu, cRam, cCombined;
+let initialized = false;
+
+// ── Helpers ────────────────────────────────────────────────────────────────
+function fmtSpeed(mbps) {
+  if (mbps >= 1000) return (mbps / 1000).toFixed(2) + '<span class="spd-unit">Gbps</span>';
+  if (mbps >= 1)    return mbps.toFixed(1)           + '<span class="spd-unit">Mbps</span>';
+  return (mbps * 1000).toFixed(0)                    + '<span class="spd-unit">Kbps</span>';
+}
+
+function fmtBytes(b) {
+  if (b >= 1e12) return (b/1e12).toFixed(2) + ' TB';
+  if (b >= 1e9)  return (b/1e9).toFixed(2)  + ' GB';
+  if (b >= 1e6)  return (b/1e6).toFixed(1)  + ' MB';
+  if (b >= 1e3)  return (b/1e3).toFixed(0)  + ' KB';
+  return b + ' B';
+}
+
+function parseUptime(s) {
+  if (!s) return '—';
+  const d = +(s.match(/(\d+)w/)?.[1]||0) * 7 + +(s.match(/(\d+)d/)?.[1]||0);
+  const h = +(s.match(/(\d+)h/)?.[1]||0);
+  const m = +(s.match(/(\d+)m/)?.[1]||0);
+  if (d > 0) return `${d}d ${h}h ${m}m`;
+  if (h > 0) return `${h}h ${m}m`;
+  return `${m}m`;
+}
+
+function tsLabel(ms) {
+  const d = new Date(ms);
+  return d.getHours().toString().padStart(2,'0') + ':' +
+         d.getMinutes().toString().padStart(2,'0') + ':' +
+         d.getSeconds().toString().padStart(2,'0');
+}
+
+function badge(status) {
+  if (status === 'up')   return `<span class="badge-dot"></span>UP`;
+  if (status === 'down') return `<span class="badge-dot"></span>DOWN`;
+  return `<span class="badge-dot"></span>—`;
+}
+
+function badgeClass(status) {
+  if (status === 'up')   return 'badge badge-up';
+  if (status === 'down') return 'badge badge-down';
+  return 'badge badge-unk';
+}
+
+function sinceStr(s) {
+  if (!s) return '';
+  return 'Since ' + s.replace('T',' ').substring(0, 16);
+}
+
+// ── Chart factories ────────────────────────────────────────────────────────
+const CHART_DEFAULTS = {
+  animation: false,
+  responsive: true,
+  maintainAspectRatio: false,
+  plugins: { legend: { display: false }, tooltip: { enabled: false } },
+};
+
+function sparkConfig(rxColor, txColor) {
+  return {
+    type: 'line',
+    data: {
+      labels: [],
+      datasets: [
+        { label: 'RX', data: [], borderColor: rxColor, backgroundColor: rxColor+'18',
+          borderWidth: 1.5, pointRadius: 0, tension: .4, fill: true },
+        { label: 'TX', data: [], borderColor: txColor, backgroundColor: 'transparent',
+          borderWidth: 1, pointRadius: 0, tension: .4, fill: false },
+      ]
+    },
+    options: { ...CHART_DEFAULTS, scales: { x: { display: false }, y: { display: false, min: 0 } } }
+  };
+}
+
+function gaugeConfig(color) {
+  return {
+    type: 'doughnut',
+    data: {
+      datasets: [{
+        data: [0, 100],
+        backgroundColor: [color, '#21262d'],
+        borderWidth: 0,
+        circumference: 270,
+        rotation: 225,
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: true,
+      animation: { duration: 400 },
+      cutout: '74%',
+      plugins: { legend: { display: false }, tooltip: { enabled: false } },
+    }
+  };
+}
+
+function combinedConfig() {
+  return {
+    type: 'line',
+    data: {
+      labels: [],
+      datasets: [
+        { label: 'Download', data: [], borderColor: '#58a6ff', backgroundColor: '#58a6ff12',
+          borderWidth: 1.5, pointRadius: 0, tension: .4, fill: true },
+        { label: 'Upload',   data: [], borderColor: '#bc8cff', backgroundColor: '#bc8cff0a',
+          borderWidth: 1.5, pointRadius: 0, tension: .4, fill: true },
+      ]
+    },
+    options: {
+      ...CHART_DEFAULTS,
+      animation: { duration: 0 },
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          enabled: true,
+          backgroundColor: '#21262d',
+          borderColor: '#30363d',
+          borderWidth: 1,
+          titleColor: '#7d8590',
+          bodyColor: '#e6edf3',
+          padding: 10,
+          callbacks: {
+            label: ctx => {
+              const v = Number(ctx.raw);
+              const str = v >= 1 ? `${v.toFixed(2)} Mbps` : `${(v * 1000).toFixed(0)} Kbps`;
+              return ` ${ctx.dataset.label}: ${str}`;
+            }
+          }
+        }
+      },
+      scales: {
+        x: {
+          display: true,
+          ticks: { color: '#7d8590', font: { size: 9 }, maxTicksLimit: 8 },
+          grid: { color: '#30363d30' },
+        },
+        y: {
+          display: true,
+          min: 0,
+          ticks: {
+            color: '#7d8590',
+            font: { size: 9 },
+            callback: function(v) {
+              const max = this.chart.scales.y.max;
+              if (max < 0.1)  return (v * 1000).toFixed(0) + ' K';
+              if (max < 1)    return (v * 1000).toFixed(0) + ' K';
+              return v.toFixed(0) + ' M';
+            }
+          },
+          grid: { color: '#30363d50' },
+        }
+      }
+    }
+  };
+}
+
+// ── Init charts ────────────────────────────────────────────────────────────
+function initCharts() {
+  cE1       = new Chart(document.getElementById('c-e1'),       sparkConfig('#58a6ff','#bc8cff'));
+  cE2       = new Chart(document.getElementById('c-e2'),       sparkConfig('#3fb950','#e3b341'));
+  cCpu      = new Chart(document.getElementById('c-cpu'),      gaugeConfig('#58a6ff'));
+  cRam      = new Chart(document.getElementById('c-ram'),      gaugeConfig('#bc8cff'));
+  cCombined = new Chart(document.getElementById('c-combined'), combinedConfig());
+}
+
+// ── Apply data ─────────────────────────────────────────────────────────────
+function apply(data) {
+  const sys = data.system || {};
+  const ws  = data.wan_status || {};
+  const sp  = data.speeds || {};
+  const h   = data.history || {};
+
+  // Header
+  if (sys.board)   document.getElementById('hdr-board').textContent = sys.board;
+  if (sys.version) document.getElementById('hdr-ver').textContent   = `RouterOS ${sys.version}`;
+
+  // Uptime / board tag
+  document.getElementById('uptime').textContent    = parseUptime(sys.uptime);
+  document.getElementById('board-tag').textContent = `${sys.board || 'RB750Gr3'} · v${sys.version || ''}`;
+
+  // Primary WAN
+  document.getElementById('primary-wan').textContent = data.primary_wan || '—';
+
+  // WAN badges + IP + latency
+  function applyWan(idPfx, entry, ip) {
+    if (!entry) return;
+    const el = document.getElementById(idPfx+'-badge');
+    el.className = badgeClass(entry.status);
+    el.innerHTML = badge(entry.status);
+    document.getElementById(idPfx+'-since').textContent = sinceStr(entry.since);
+    // IP
+    const ipEl = document.getElementById(idPfx+'-ip');
+    if (ipEl) ipEl.textContent = ip || '—';
+    // Latency
+    const rttEl = document.getElementById(idPfx+'-rtt');
+    if (rttEl) {
+      if (entry.rtt_ms != null) {
+        rttEl.textContent = entry.rtt_ms + ' ms';
+        rttEl.style.color = entry.rtt_ms > 50 ? 'var(--orange)' : entry.rtt_ms > 100 ? 'var(--red)' : 'var(--green)';
+      } else {
+        rttEl.textContent = '—';
+      }
+    }
+  }
+  const wips = data.wan_ips || {};
+  applyWan('w1', ws.wan1, wips.wan1);
+  applyWan('w2', ws.wan2, wips.wan2);
+
+  // PCC distribution — single source of truth: active connection marks
+  const pcc = data.pcc || {};
+  if (!pcc.ready) {
+    document.getElementById('pcc-pct-w1').textContent = '—';
+    document.getElementById('pcc-pct-w2').textContent = '—';
+    document.getElementById('pcc-bar-w1').style.width = '50%';
+    document.getElementById('pcc-bar-w2').style.width = '50%';
+    document.getElementById('conn-w1').textContent = 'warming up…';
+    document.getElementById('conn-w2').textContent = 'warming up…';
+  } else {
+    const p1 = pcc.wan1_pct ?? 50;
+    const p2 = pcc.wan2_pct ?? 50;
+    document.getElementById('pcc-pct-w1').textContent = p1 + '%';
+    document.getElementById('pcc-pct-w2').textContent = p2 + '%';
+    document.getElementById('pcc-bar-w1').style.width = p1 + '%';
+    document.getElementById('pcc-bar-w2').style.width = p2 + '%';
+    document.getElementById('conn-w1').textContent = (pcc.wan1_count ?? '—') + ' active';
+    document.getElementById('conn-w2').textContent = (pcc.wan2_count ?? '—') + ' active';
+  }
+
+  // Session summary
+  const ss = data.session_summary || {};
+  document.getElementById('sess-tcp').textContent = ss.tcp ?? '—';
+  document.getElementById('sess-udp').textContent = ss.udp ?? '—';
+  document.getElementById('sess-est').textContent = ss.established ?? '—';
+  document.getElementById('sess-new').textContent = ss.new_per_sec != null ? ss.new_per_sec + '/s' : '—';
+
+  // Failover events
+  const evts = data.failover_events || [];
+  const fbody = document.getElementById('failover-body');
+  if (evts.length === 0) {
+    fbody.innerHTML = '<div class="no-events">No failover events recorded</div>';
+  } else {
+    const rows = [...evts].reverse().map(e => {
+      const isDown = e.message.includes('DOWN') || e.message.includes('disabling');
+      const cls    = isDown ? 'evt-down' : 'evt-up';
+      return `<tr>
+        <td class="evt-time">${e.time || ''}</td>
+        <td class="evt-msg ${cls}">${e.message}</td>
+      </tr>`;
+    }).join('');
+    fbody.innerHTML = `<table class="event-table">${rows}</table>`;
+  }
+
+  // Interface speeds
+  function applyIface(pfx, iface) {
+    const s = sp[iface] || {};
+    const bEl = document.getElementById(pfx+'-badge');
+    bEl.className = badgeClass(s.running ? 'up' : 'down');
+    bEl.innerHTML = badge(s.running ? 'up' : 'down');
+    document.getElementById(pfx+'-rx').innerHTML    = fmtSpeed(s.rx_mbps || 0);
+    document.getElementById(pfx+'-tx').innerHTML    = fmtSpeed(s.tx_mbps || 0);
+    document.getElementById(pfx+'-srx').textContent = fmtBytes(s.session_rx || 0);
+    document.getElementById(pfx+'-stx').textContent = fmtBytes(s.session_tx || 0);
+    document.getElementById(pfx+'-trx').textContent = fmtBytes(s.rx_total || 0);
+    document.getElementById(pfx+'-ttx').textContent = fmtBytes(s.tx_total || 0);
+  }
+  applyIface('e1', 'ether1');
+  applyIface('e2', 'ether2');
+
+  // CPU
+  const cpu = sys.cpu_load || 0;
+  document.getElementById('cpu-val').textContent  = cpu + '%';
+  document.getElementById('cpu-freq').textContent = sys.cpu_freq ? sys.cpu_freq + ' MHz' : '—';
+  cCpu.data.datasets[0].data = [cpu, 100 - cpu];
+  cCpu.update('none');
+
+  // RAM
+  const ram = sys.ram_pct || 0;
+  document.getElementById('ram-val').textContent = ram + '%';
+  const usedMem = (sys.total_memory || 0) - (sys.free_memory || 0);
+  document.getElementById('ram-detail').textContent =
+    sys.total_memory ? fmtBytes(usedMem) + ' / ' + fmtBytes(sys.total_memory) : '—';
+  cRam.data.datasets[0].data = [ram, 100 - ram];
+  cRam.update('none');
+
+  // Temperature
+  const t = parseFloat(data.temperature);
+  if (!isNaN(t)) {
+    document.getElementById('temp-val').textContent = t;
+    document.getElementById('temp-status').textContent = t > 70 ? '⚠ High' : t > 55 ? 'Warm' : 'Normal';
+    document.querySelector('.temp-big').style.color =
+      t > 70 ? 'var(--red)' : t > 55 ? 'var(--orange)' : 'var(--orange)';
+  } else {
+    document.getElementById('temp-val').textContent    = '—';
+    document.getElementById('temp-status').textContent = 'N/A';
+  }
+
+  // Clients
+  document.getElementById('client-count').textContent = data.dhcp_count ?? '—';
+
+  // Disk
+  const hddFree  = sys.free_hdd  || 0;
+  const hddTotal = sys.total_hdd || 1;
+  const hddPct   = Math.round((hddTotal - hddFree) / hddTotal * 100);
+  document.getElementById('disk-free').textContent = fmtBytes(hddFree) + ' free';
+  document.getElementById('disk-of').textContent   = `of ${fmtBytes(hddTotal)} total`;
+  const bar = document.getElementById('disk-bar');
+  bar.style.width      = hddPct + '%';
+  bar.style.background = hddPct > 90 ? 'var(--red)' : hddPct > 75 ? 'var(--orange)' : 'var(--green)';
+
+  // Sparklines
+  if (h.timestamps && h.timestamps.length) {
+    const labels = h.timestamps.map(tsLabel);
+
+    cE1.data.labels            = labels;
+    cE1.data.datasets[0].data  = h.ether1_rx || [];
+    cE1.data.datasets[1].data  = h.ether1_tx || [];
+    cE1.update('none');
+
+    cE2.data.labels            = labels;
+    cE2.data.datasets[0].data  = h.ether2_rx || [];
+    cE2.data.datasets[1].data  = h.ether2_tx || [];
+    cE2.update('none');
+
+    cCombined.data.labels            = labels;
+    cCombined.data.datasets[0].data  = h.total_rx || [];
+    cCombined.data.datasets[1].data  = h.total_tx || [];
+    cCombined.update('none');
+  }
+
+  // Last updated
+  document.getElementById('last-updated').textContent = 'Updated ' + new Date().toLocaleTimeString();
+}
+
+// ── Polling ────────────────────────────────────────────────────────────────
+async function fetchStats() {
+  try {
+    const r = await fetch('/api/stats');
+    if (!r.ok) return;
+    const data = await r.json();
+    if (data.error) return;
+
+    if (!initialized) {
+      document.getElementById('loader').style.display = 'none';
+      document.getElementById('dash').style.display   = 'block';
+      initCharts();
+      initialized = true;
+    }
+
+    apply(data);
+  } catch (e) {
+    console.warn('fetch error', e);
+  }
+}
+
+fetchStats();
+setInterval(fetchStats, 5000);
+</script>
+</body>
+</html>
