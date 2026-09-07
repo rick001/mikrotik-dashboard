@@ -82,7 +82,7 @@ header {
 
 /* ── Layout helpers ───────────────────────────────────── */
 .g4 { display: grid; grid-template-columns: repeat(4,1fr); gap: 14px; margin-bottom: 14px; }
-.g2 { display: grid; grid-template-columns: 1fr 1fr;       gap: 14px; margin-bottom: 14px; }
+.g2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 14px; align-items: start; }
 .g5 { display: grid; grid-template-columns: repeat(5,1fr); gap: 14px; margin-bottom: 14px; }
 .g1 { margin-bottom: 14px; }
 
@@ -200,6 +200,18 @@ header {
 .evt-dur  { color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .evt-status { font-weight: 600; white-space: nowrap; }
 .no-events { color: var(--muted); font-size: 11px; text-align: center; padding: 16px; }
+#failover-body {
+  max-height: 168px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+#failover-body::-webkit-scrollbar { width: 6px; }
+#failover-body::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 3px;
+}
 
 /* ── Traffic cards ────────────────────────────────────── */
 .iface-header {
