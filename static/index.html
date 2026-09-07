@@ -162,21 +162,78 @@ header {
 .wan-ip         { color: var(--blue); }
 
 /* ── PCC Distribution ─────────────────────────────────── */
-.pcc-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
-
-.pcc-wan { }
-.pcc-name { font-size: 11px; font-weight: 600; margin-bottom: 6px; }
-.pcc-bar-bg { height: 6px; background: var(--surface-2); border-radius: 3px; overflow: hidden; margin-bottom: 5px; }
-.pcc-bar-fill { height: 100%; border-radius: 3px; transition: width .6s ease; }
-.pcc-bar-fill.w1 { background: var(--blue); }
-.pcc-bar-fill.w2 { background: var(--green); }
-.pcc-meta { display: flex; justify-content: space-between; }
-.pcc-pct  { font-size: 18px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.pcc-card {
+  min-height: 248px;
+  display: flex;
+  flex-direction: column;
+}
+.pcc-layout {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  flex: 1;
+  min-height: 0;
+}
+.pcc-chart-wrap {
+  position: relative;
+  width: 140px;
+  height: 140px;
+  flex-shrink: 0;
+}
+.pcc-chart-center {
+  position: absolute; inset: 0;
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  pointer-events: none;
+}
+.pcc-chart-center .pcc-total {
+  font-size: 22px; font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+.pcc-chart-center .pcc-total-label {
+  font-size: 9px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: .6px;
+  color: var(--muted); margin-top: 4px;
+}
+.pcc-legend {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+}
+.pcc-leg-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.pcc-leg-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.pcc-leg-name {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 12px; font-weight: 600;
+}
+.pcc-dot {
+  width: 8px; height: 8px; border-radius: 2px; flex-shrink: 0;
+}
+.pcc-dot.w1 { background: var(--blue); }
+.pcc-dot.w2 { background: var(--green); }
+.pcc-pct  { font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; }
 .pcc-pct.w1 { color: var(--blue); }
 .pcc-pct.w2 { color: var(--green); }
-.pcc-conns { font-size: 10px; color: var(--muted); align-self: flex-end; }
+.pcc-conns { font-size: 11px; color: var(--muted); }
 
 /* ── Failover / outages ───────────────────────────────── */
+.failover-card {
+  min-height: 248px;
+  display: flex;
+  flex-direction: column;
+}
 .failover-kpis {
   display: flex; flex-wrap: wrap; gap: 10px 14px;
   margin-bottom: 12px;
@@ -495,29 +552,36 @@ header {
   <!-- PCC Distribution + Failover Events -->
   <div class="g2">
 
-    <div class="card">
+    <div class="card pcc-card">
       <div class="label" style="margin-bottom:14px">PCC Load Distribution</div>
-      <div class="pcc-grid">
-        <div class="pcc-wan">
-          <div class="pcc-name">WAN1 · SSWL</div>
-          <div class="pcc-bar-bg"><div class="pcc-bar-fill w1" id="pcc-bar-w1" style="width:50%"></div></div>
-          <div class="pcc-meta">
-            <div class="pcc-pct w1" id="pcc-pct-w1">—</div>
-            <div class="pcc-conns" id="conn-w1">— active</div>
+      <div class="pcc-layout">
+        <div class="pcc-chart-wrap">
+          <canvas id="c-pcc"></canvas>
+          <div class="pcc-chart-center">
+            <div class="pcc-total" id="pcc-total">—</div>
+            <div class="pcc-total-label">active</div>
           </div>
         </div>
-        <div class="pcc-wan">
-          <div class="pcc-name">WAN2 · JIO</div>
-          <div class="pcc-bar-bg"><div class="pcc-bar-fill w2" id="pcc-bar-w2" style="width:50%"></div></div>
-          <div class="pcc-meta">
-            <div class="pcc-pct w2" id="pcc-pct-w2">—</div>
-            <div class="pcc-conns" id="conn-w2">— active</div>
+        <div class="pcc-legend">
+          <div class="pcc-leg-row">
+            <div class="pcc-leg-top">
+              <div class="pcc-leg-name"><span class="pcc-dot w1"></span>WAN1 · SSWL</div>
+              <div class="pcc-pct w1" id="pcc-pct-w1">—</div>
+            </div>
+            <div class="pcc-conns" id="conn-w1">— connections</div>
+          </div>
+          <div class="pcc-leg-row">
+            <div class="pcc-leg-top">
+              <div class="pcc-leg-name"><span class="pcc-dot w2"></span>WAN2 · JIO</div>
+              <div class="pcc-pct w2" id="pcc-pct-w2">—</div>
+            </div>
+            <div class="pcc-conns" id="conn-w2">— connections</div>
           </div>
         </div>
       </div>
     </div>
 
-    <div class="card">
+    <div class="card failover-card">
       <div class="label" style="margin-bottom:10px">Failover Events</div>
       <div class="failover-kpis">
         <span class="failover-kpi"><b id="failover-total">0</b> failovers</span>
@@ -605,7 +669,7 @@ header {
 
 <script>
 // ── Chart instances ────────────────────────────────────────────────────────
-let cE1, cE2, cCpu, cRam, cCombined;
+let cE1, cE2, cCpu, cRam, cCombined, cPcc;
 let initialized = false;
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -703,6 +767,42 @@ function gaugeConfig(color) {
   };
 }
 
+function pccConfig() {
+  return {
+    type: 'doughnut',
+    data: {
+      labels: ['WAN1 · SSWL', 'WAN2 · JIO'],
+      datasets: [{
+        data: [50, 50],
+        backgroundColor: ['#58a6ff', '#3fb950'],
+        borderWidth: 0,
+        hoverOffset: 0,
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: true,
+      animation: { duration: 400 },
+      cutout: '72%',
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          enabled: true,
+          backgroundColor: '#21262d',
+          borderColor: '#30363d',
+          borderWidth: 1,
+          titleColor: '#7d8590',
+          bodyColor: '#e6edf3',
+          padding: 8,
+          callbacks: {
+            label: ctx => ` ${ctx.label}: ${ctx.raw}%`,
+          }
+        }
+      }
+    }
+  };
+}
+
 function combinedConfig() {
   return {
     type: 'line',
@@ -770,6 +870,7 @@ function initCharts() {
   cE2       = new Chart(document.getElementById('c-e2'),       sparkConfig('#3fb950','#e3b341'));
   cCpu      = new Chart(document.getElementById('c-cpu'),      gaugeConfig('#58a6ff'));
   cRam      = new Chart(document.getElementById('c-ram'),      gaugeConfig('#bc8cff'));
+  cPcc      = new Chart(document.getElementById('c-pcc'),      pccConfig());
   cCombined = new Chart(document.getElementById('c-combined'), combinedConfig());
 }
 
@@ -816,24 +917,35 @@ function apply(data) {
   applyWan('w1', ws.wan1, wips.wan1);
   applyWan('w2', ws.wan2, wips.wan2);
 
-  // PCC distribution — single source of truth: active connection marks
+  // PCC distribution — doughnut + legend
   const pcc = data.pcc || {};
+  const w1c = pcc.wan1_count ?? 0;
+  const w2c = pcc.wan2_count ?? 0;
+  const tot = w1c + w2c;
   if (!pcc.ready) {
     document.getElementById('pcc-pct-w1').textContent = '—';
     document.getElementById('pcc-pct-w2').textContent = '—';
-    document.getElementById('pcc-bar-w1').style.width = '50%';
-    document.getElementById('pcc-bar-w2').style.width = '50%';
     document.getElementById('conn-w1').textContent = 'warming up…';
     document.getElementById('conn-w2').textContent = 'warming up…';
+    document.getElementById('pcc-total').textContent = '—';
+    if (cPcc) {
+      cPcc.data.datasets[0].data = [1, 1];
+      cPcc.data.datasets[0].backgroundColor = ['#30363d', '#30363d'];
+      cPcc.update('none');
+    }
   } else {
     const p1 = pcc.wan1_pct ?? 50;
     const p2 = pcc.wan2_pct ?? 50;
     document.getElementById('pcc-pct-w1').textContent = p1 + '%';
     document.getElementById('pcc-pct-w2').textContent = p2 + '%';
-    document.getElementById('pcc-bar-w1').style.width = p1 + '%';
-    document.getElementById('pcc-bar-w2').style.width = p2 + '%';
-    document.getElementById('conn-w1').textContent = (pcc.wan1_count ?? '—') + ' active';
-    document.getElementById('conn-w2').textContent = (pcc.wan2_count ?? '—') + ' active';
+    document.getElementById('conn-w1').textContent = w1c + ' connections';
+    document.getElementById('conn-w2').textContent = w2c + ' connections';
+    document.getElementById('pcc-total').textContent = tot;
+    if (cPcc) {
+      cPcc.data.datasets[0].data = [p1, p2];
+      cPcc.data.datasets[0].backgroundColor = ['#58a6ff', '#3fb950'];
+      cPcc.update('none');
+    }
   }
 
   // Session summary
