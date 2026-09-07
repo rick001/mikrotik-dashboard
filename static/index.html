@@ -176,14 +176,29 @@ header {
 .pcc-pct.w2 { color: var(--green); }
 .pcc-conns { font-size: 10px; color: var(--muted); align-self: flex-end; }
 
-/* ── Failover events ──────────────────────────────────── */
+/* ── Failover / outages ───────────────────────────────── */
+.failover-kpis {
+  display: flex; flex-wrap: wrap; gap: 10px 14px;
+  margin-bottom: 12px;
+}
+.failover-kpi {
+  font-size: 11px; font-weight: 600;
+  letter-spacing: 0; text-transform: none;
+  color: var(--muted);
+}
+.failover-kpi b {
+  color: var(--text); font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
 .event-table { width: 100%; border-collapse: collapse; }
 .event-table td { padding: 7px 4px; border-bottom: 1px solid var(--border); font-size: 11px; vertical-align: middle; }
 .event-table tr:last-child td { border-bottom: none; }
-.evt-time { color: var(--muted); font-family: monospace; white-space: nowrap; width: 70px; }
+.evt-time { color: var(--muted); font-family: monospace; white-space: nowrap; width: 118px; }
 .evt-msg  { color: var(--text); }
 .evt-down { color: var(--red); }
 .evt-up   { color: var(--green); }
+.evt-dur  { color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.evt-status { font-weight: 600; white-space: nowrap; }
 .no-events { color: var(--muted); font-size: 11px; text-align: center; padding: 16px; }
 
 /* ── Traffic cards ────────────────────────────────────── */
@@ -491,9 +506,11 @@ header {
     </div>
 
     <div class="card">
-      <div class="label" style="margin-bottom:12px;display:flex;align-items:center;justify-content:space-between;gap:8px">
-        <span>Failover Events</span>
-        <span id="failover-count" style="font-size:11px;font-weight:600;letter-spacing:0;text-transform:none;color:var(--muted)">0</span>
+      <div class="label" style="margin-bottom:10px">Failover Events</div>
+      <div class="failover-kpis">
+        <span class="failover-kpi"><b id="failover-total">0</b> failovers</span>
+        <span class="failover-kpi">Last <b id="failover-last">—</b></span>
+        <span class="failover-kpi">Open: <b id="failover-open">none</b></span>
       </div>
       <div id="failover-body">
         <div class="no-events">No failover events recorded</div>
@@ -814,25 +831,27 @@ function apply(data) {
   document.getElementById('sess-est').textContent = ss.established ?? '—';
   document.getElementById('sess-new').textContent = ss.new_per_sec != null ? ss.new_per_sec + '/s' : '—';
 
-  // Failover events
-  const evts = data.failover_events || [];
-  const evtCount = data.failover_event_count ?? evts.length;
-  const countEl = document.getElementById('failover-count');
-  if (countEl) {
-    countEl.textContent = evtCount === 1
-      ? '1 failover'
-      : `${evtCount} failovers`;
-  }
+  // Failover outages
+  const summary = data.failover_summary || {};
+  const outages = data.failover_outages || [];
+  const total = summary.total ?? data.failover_event_count ?? 0;
+  document.getElementById('failover-total').textContent = total;
+  document.getElementById('failover-last').textContent = summary.last_duration || '—';
+  document.getElementById('failover-open').textContent = summary.open || 'none';
+
   const fbody = document.getElementById('failover-body');
-  if (evts.length === 0) {
-    fbody.innerHTML = '<div class="no-events">No failover events recorded</div>';
+  if (outages.length === 0) {
+    fbody.innerHTML = '<div class="no-events">No outages recorded</div>';
   } else {
-    const rows = [...evts].reverse().map(e => {
-      const isDown = e.message.includes('DOWN') || e.message.includes('disabling');
-      const cls    = isDown ? 'evt-down' : 'evt-up';
+    const rows = [...outages].reverse().map(o => {
+      const ongoing = o.status === 'ongoing';
+      const statusCls = ongoing ? 'evt-down' : 'evt-up';
+      const statusTxt = ongoing ? 'ongoing' : 'recovered';
       return `<tr>
-        <td class="evt-time">${e.time || ''}</td>
-        <td class="evt-msg ${cls}">${e.message}</td>
+        <td class="evt-time">${o.started || ''}</td>
+        <td class="evt-msg">${o.label || o.wan || ''}</td>
+        <td class="evt-dur">${o.duration || '—'}</td>
+        <td class="evt-status ${statusCls}">${statusTxt}</td>
       </tr>`;
     }).join('');
     fbody.innerHTML = `<table class="event-table">${rows}</table>`;

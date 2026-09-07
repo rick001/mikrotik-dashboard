@@ -58,8 +58,10 @@ state: dict = {
     "conn_counts":        {"wan1": 0, "wan2": 0},
     "poll_count":         0,
     "latest":             {},
-    "failover_events":    deque(maxlen=10),
+    "failover_events":    deque(maxlen=40),
     "failover_event_count": 0,  # unique DOWNs from log seed + live DOWNs
+    "failover_outages":   [],
+    "failover_summary":   {"total": 0, "last_duration_sec": None, "last_duration": None, "open": "none"},
     "prev_wan_snapshot":  None,   # None until first baseline
     "prev_primary_wan":   None,
     "logs_seeded":        False,
@@ -188,11 +190,108 @@ def _should_keep_failover_event(message: str, event_ts: float, recent: list) -> 
     return True
 
 
-def _public_failover_events() -> list[dict]:
+def _format_duration(sec: float) -> str:
+    sec = max(0, int(sec))
+    days, rem = divmod(sec, 86400)
+    hours, rem = divmod(rem, 3600)
+    mins, secs = divmod(rem, 60)
+    if days > 0:
+        return f"{days}d {hours}h"
+    if hours > 0:
+        return f"{hours}h {mins}m"
+    if mins > 0:
+        return f"{mins}m" if secs == 0 else f"{mins}m {secs}s"
+    return f"{secs}s"
+
+
+def _format_outage_start(ts: float, time_str: str = "") -> str:
+    if time_str and len(time_str) >= 16 and time_str[4] == "-":
+        return time_str[:16]
+    return time.strftime("%Y-%m-%d %H:%M", time.localtime(ts))
+
+
+def build_failover_outages(events, now: float) -> list[dict]:
+    """Pair WAN DOWN→UP into outage incidents (last 10)."""
+    open_map: dict[str, dict] = {}
+    closed: list[dict] = []
+
+    for e in sorted(events, key=lambda x: x.get("ts") or 0):
+        key = e.get("key") or _normalize_failover_message(e.get("message", ""))
+        if "|" not in key or key.startswith("pathing") or key.startswith("other"):
+            continue
+        wan, direction = key.split("|", 1)
+        if wan not in WAN_LABELS:
+            continue
+        if direction == "down":
+            open_map[wan] = e
+        elif direction == "up" and wan in open_map:
+            start = open_map.pop(wan)
+            start_ts = float(start.get("ts") or 0)
+            end_ts = float(e.get("ts") or now)
+            closed.append({
+                "wan": wan,
+                "label": WAN_LABELS[wan],
+                "started": _format_outage_start(start_ts, start.get("time", "")),
+                "ended": _format_outage_start(end_ts, e.get("time", "")),
+                "duration_sec": max(0, int(end_ts - start_ts)),
+                "duration": _format_duration(end_ts - start_ts),
+                "status": "recovered",
+                "_ts": start_ts,
+            })
+
+    for wan, start in open_map.items():
+        start_ts = float(start.get("ts") or 0)
+        closed.append({
+            "wan": wan,
+            "label": WAN_LABELS[wan],
+            "started": _format_outage_start(start_ts, start.get("time", "")),
+            "ended": None,
+            "duration_sec": max(0, int(now - start_ts)),
+            "duration": _format_duration(now - start_ts),
+            "status": "ongoing",
+            "_ts": start_ts,
+        })
+
+    closed.sort(key=lambda o: o["_ts"])
+    return closed[-10:]
+
+
+def build_failover_summary(outages: list[dict], wan_status: dict | None = None) -> dict:
+    total = int(state.get("failover_event_count", 0))
+    last = outages[-1] if outages else None
+    open_labels = [o["label"] for o in outages if o.get("status") == "ongoing"]
+    if not open_labels and wan_status:
+        for key, label in WAN_LABELS.items():
+            entry = wan_status.get(key)
+            if entry and entry.get("status") == "down":
+                open_labels.append(label)
+    return {
+        "total": total,
+        "last_duration_sec": last["duration_sec"] if last else None,
+        "last_duration": last["duration"] if last else None,
+        "open": ", ".join(open_labels) if open_labels else "none",
+    }
+
+
+def _public_failover_outages(outages: list[dict]) -> list[dict]:
     return [
-        {"time": e.get("time", ""), "message": e.get("message", "")}
-        for e in state["failover_events"]
+        {
+            "wan": o["wan"],
+            "label": o["label"],
+            "started": o["started"],
+            "ended": o.get("ended"),
+            "duration_sec": o["duration_sec"],
+            "duration": o["duration"],
+            "status": o["status"],
+        }
+        for o in outages
     ]
+
+
+def _refresh_failover_views(now: float, wan_status: dict | None = None) -> None:
+    outages = build_failover_outages(list(state["failover_events"]), now)
+    state["failover_outages"] = outages
+    state["failover_summary"] = build_failover_summary(outages, wan_status)
 
 
 def _append_failover_event(message: str, now: float) -> None:
@@ -207,6 +306,7 @@ def _append_failover_event(message: str, now: float) -> None:
     })
     if "DOWN" in message:
         state["failover_event_count"] = int(state.get("failover_event_count", 0)) + 1
+    _refresh_failover_views(now)
 
 
 async def seed_failover_from_logs(client: httpx.AsyncClient) -> None:
@@ -252,16 +352,18 @@ async def seed_failover_from_logs(client: httpx.AsyncClient) -> None:
     down_count = sum(1 for e in kept if "DOWN" in e["message"])
     state["failover_event_count"] = down_count
     state["failover_events"].clear()
-    for e in kept[-10:]:
+    for e in kept[-40:]:
         state["failover_events"].append(e)
     state["log_seed_ok"] = True
+    now = time.time()
+    _refresh_failover_views(now)
     logger.info(
-        "Failover log seed: %d raw → %d after %ds dedupe, %d DOWNs, showing last %d",
+        "Failover log seed: %d raw → %d after %ds dedupe, %d DOWNs, %d outages",
         len(logs),
         len(kept),
         DEDUP_WINDOW_SEC,
         down_count,
-        len(state["failover_events"]),
+        len(state["failover_outages"]),
     )
 
 
@@ -511,6 +613,7 @@ async def poll():
 
                 # ── Failover events from Netwatch / pathing transitions ───
                 record_failover_transitions(wan_status, primary_wan, now)
+                _refresh_failover_views(now, wan_status)
 
                 # ── PCC distribution from active connection marks ─────────
                 cc   = dict(state["conn_counts"])
@@ -536,8 +639,11 @@ async def poll():
                     "dhcp_count":      dhcp_count,
                     "pcc":             pcc,
                     "session_summary": dict(state.get("session_summary", {})),
-                    "failover_events": _public_failover_events(),
                     "failover_event_count": int(state.get("failover_event_count", 0)),
+                    "failover_summary": dict(state.get("failover_summary") or {}),
+                    "failover_outages": _public_failover_outages(
+                        state.get("failover_outages") or []
+                    ),
                     "history":         {k: list(v) for k, v in history.items()},
                 }
 
