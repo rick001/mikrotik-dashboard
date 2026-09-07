@@ -4,6 +4,7 @@ import os
 import re
 import time
 from collections import deque
+from datetime import datetime
 from typing import Optional
 
 import httpx
@@ -40,6 +41,16 @@ WAN_LABELS = {
     "wan2": "WAN2 · JIO",
 }
 
+# Exact messages emitted by RouterOS failover scripts (REST has no message~ regex).
+FAILOVER_LOG_MESSAGES = [
+    "WAN1 DOWN - disabling routes and mangle rules",
+    "WAN1 UP - restoring routes and mangle rules",
+    "WAN2 DOWN - disabling routes and mangle rules",
+    "WAN2 UP - restoring routes and mangle rules",
+]
+
+DEDUP_WINDOW_SEC = 5
+
 state: dict = {
     "prev_bytes":         {},
     "prev_time":          None,
@@ -48,8 +59,11 @@ state: dict = {
     "poll_count":         0,
     "latest":             {},
     "failover_events":    deque(maxlen=10),
+    "failover_event_count": 0,  # unique DOWNs from log seed + live DOWNs
     "prev_wan_snapshot":  None,   # None until first baseline
     "prev_primary_wan":   None,
+    "logs_seeded":        False,
+    "log_seed_ok":        False,
 }
 
 
@@ -105,15 +119,150 @@ async def mt_get(client: httpx.AsyncClient, path: str, timeout: float = 4.0):
     return None
 
 
+async def mt_post(client: httpx.AsyncClient, path: str, body: dict, timeout: float = 20.0):
+    try:
+        r = await client.post(
+            f"http://{MIKROTIK_HOST}/rest{path}",
+            auth=(MIKROTIK_USER, MIKROTIK_PASS),
+            json=body,
+            timeout=timeout,
+        )
+        if r.status_code == 200:
+            return r.json()
+        logger.warning(f"MT POST {path} → {r.status_code}")
+    except Exception as e:
+        logger.warning(f"MT POST {path} failed: {e}")
+    return None
+
+
 def _event_time(now: float) -> str:
     return time.strftime("%H:%M:%S", time.localtime(now))
 
 
+def _parse_log_time(s: str) -> float | None:
+    """Parse RouterOS log time to epoch seconds."""
+    if not s:
+        return None
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%b/%d/%Y %H:%M:%S", "%H:%M:%S"):
+        try:
+            dt = datetime.strptime(s, fmt)
+            if fmt == "%H:%M:%S":
+                today = datetime.now()
+                dt = dt.replace(year=today.year, month=today.month, day=today.day)
+            return dt.timestamp()
+        except ValueError:
+            continue
+    return None
+
+
+def _normalize_failover_message(msg: str) -> str:
+    """Stable dedupe key: wan1|down, wan2|up, or pathing|<msg>."""
+    m = msg or ""
+    upper = m.upper()
+    wan = None
+    if "WAN1" in upper:
+        wan = "wan1"
+    elif "WAN2" in upper:
+        wan = "wan2"
+    if wan:
+        if "DOWN" in upper:
+            return f"{wan}|down"
+        if "UP" in upper:
+            return f"{wan}|up"
+    if m.startswith("Pathing →") or m.startswith("Pathing ->"):
+        return f"pathing|{m}"
+    return f"other|{m}"
+
+
+def _should_keep_failover_event(message: str, event_ts: float, recent: list) -> bool:
+    """Keep unless same normalized key appears within DEDUP_WINDOW_SEC."""
+    key = _normalize_failover_message(message)
+    for prev in reversed(recent):
+        prev_ts = prev.get("ts")
+        if prev_ts is None:
+            continue
+        if event_ts - prev_ts > DEDUP_WINDOW_SEC:
+            break
+        if prev.get("key") == key:
+            return False
+    return True
+
+
+def _public_failover_events() -> list[dict]:
+    return [
+        {"time": e.get("time", ""), "message": e.get("message", "")}
+        for e in state["failover_events"]
+    ]
+
+
 def _append_failover_event(message: str, now: float) -> None:
+    """Append a UI event with 5s-window dedupe. Only DOWN increments count."""
+    if not _should_keep_failover_event(message, now, list(state["failover_events"])):
+        return
     state["failover_events"].append({
         "time": _event_time(now),
         "message": message,
+        "ts": now,
+        "key": _normalize_failover_message(message),
     })
+    if "DOWN" in message:
+        state["failover_event_count"] = int(state.get("failover_event_count", 0)) + 1
+
+
+async def seed_failover_from_logs(client: httpx.AsyncClient) -> None:
+    """One-shot filtered log seed — exact script messages only, not full /log dump."""
+    if state.get("logs_seeded"):
+        return
+    state["logs_seeded"] = True
+
+    # 4-way OR in RouterOS query stack: ((a|b)|c)|d
+    query = [f"message={m}" for m in FAILOVER_LOG_MESSAGES] + ["#|", "#|", "#|"]
+    logs = await mt_post(
+        client,
+        "/log/print",
+        {".proplist": ["time", "message"], ".query": query},
+        timeout=20.0,
+    )
+    if not logs or not isinstance(logs, list):
+        logger.warning("Failover log seed failed or empty; continuing with Netwatch-only history")
+        return
+
+    dated: list[dict] = []
+    for entry in logs:
+        t = entry.get("time", "") or ""
+        msg = entry.get("message", "") or ""
+        ts = _parse_log_time(t)
+        if ts is None:
+            continue
+        dated.append({"time": t, "message": msg, "ts": ts})
+
+    dated.sort(key=lambda e: e["ts"])
+
+    kept: list[dict] = []
+    for entry in dated:
+        if not _should_keep_failover_event(entry["message"], entry["ts"], kept):
+            continue
+        kept.append({
+            "time": entry["time"],
+            "message": entry["message"],
+            "ts": entry["ts"],
+            "key": _normalize_failover_message(entry["message"]),
+        })
+
+    down_count = sum(1 for e in kept if "DOWN" in e["message"])
+    state["failover_event_count"] = down_count
+    state["failover_events"].clear()
+    for e in kept[-10:]:
+        state["failover_events"].append(e)
+    state["log_seed_ok"] = True
+    logger.info(
+        "Failover log seed: %d raw → %d after %ds dedupe, %d DOWNs, showing last %d",
+        len(logs),
+        len(kept),
+        DEDUP_WINDOW_SEC,
+        down_count,
+        len(state["failover_events"]),
+    )
 
 
 def _wan_snapshot(wan_status: dict) -> dict:
@@ -131,20 +280,21 @@ def _wan_snapshot(wan_status: dict) -> dict:
 
 
 def record_failover_transitions(wan_status: dict, primary_wan: str, now: float) -> None:
-    """Derive Failover Events from Netwatch + active-route changes."""
+    """Derive live Failover Events from Netwatch + pathing changes."""
     snap = _wan_snapshot(wan_status)
     prev = state["prev_wan_snapshot"]
 
     if prev is None:
-        # Baseline: seed one event per WAN already down (restart mid-outage).
-        for key, label in WAN_LABELS.items():
-            cur = snap.get(key)
-            if cur and cur["status"] == "down":
-                since = cur.get("since") or ""
-                msg = f"{label} DOWN"
-                if since:
-                    msg = f"{msg} (since {since.replace('T', ' ')[:16]})"
-                _append_failover_event(msg, now)
+        # Baseline: if log seed already filled history, skip mid-outage synthetic events.
+        if not state.get("log_seed_ok"):
+            for key, label in WAN_LABELS.items():
+                cur = snap.get(key)
+                if cur and cur["status"] == "down":
+                    since = cur.get("since") or ""
+                    msg = f"{label} DOWN"
+                    if since:
+                        msg = f"{msg} (since {since.replace('T', ' ')[:16]})"
+                    _append_failover_event(msg, now)
         state["prev_wan_snapshot"] = snap
         state["prev_primary_wan"] = primary_wan
         return
@@ -159,7 +309,7 @@ def record_failover_transitions(wan_status: dict, primary_wan: str, now: float) 
 
     prev_primary = state["prev_primary_wan"]
     if prev_primary is not None and primary_wan != prev_primary:
-        _append_failover_event(f"Active route → {primary_wan}", now)
+        _append_failover_event(f"Pathing → {primary_wan}", now)
 
     state["prev_wan_snapshot"] = snap
     state["prev_primary_wan"] = primary_wan
@@ -169,6 +319,7 @@ def record_failover_transitions(wan_status: dict, primary_wan: str, now: float) 
 
 async def poll():
     async with httpx.AsyncClient() as client:
+        await seed_failover_from_logs(client)
         while True:
             try:
                 now = time.time()
@@ -344,23 +495,21 @@ async def poll():
                 if leases:
                     dhcp_count = sum(1 for l in leases if l.get("status") == "bound")
 
-                # ── Primary WAN ───────────────────────────────────────────
-                primary_wan = "Load Balanced"
-                if routes:
-                    defaults = sorted(
-                        [r for r in routes
-                         if r.get("dst-address") == "0.0.0.0/0"
-                         and r.get("active", "false") == "true"],
-                        key=lambda x: int(x.get("distance", 99))
-                    )
-                    if defaults:
-                        gw = defaults[0].get("gateway", "")
-                        if "172.28" in gw:
-                            primary_wan = "WAN1 · SSWL"
-                        elif "192.168.29" in gw:
-                            primary_wan = "WAN2 · JIO"
+                # ── Pathing mode from Netwatch (not route distance) ───────
+                w1s = (wan_status.get("wan1") or {}).get("status")
+                w2s = (wan_status.get("wan2") or {}).get("status")
+                if w1s == "up" and w2s == "up":
+                    primary_wan = "Load Balanced (both up)"
+                elif w1s == "up" and w2s != "up":
+                    primary_wan = "WAN1 · SSWL"
+                elif w2s == "up" and w1s != "up":
+                    primary_wan = "WAN2 · JIO"
+                elif w1s == "down" and w2s == "down":
+                    primary_wan = "Both WANs DOWN"
+                else:
+                    primary_wan = "Unknown"
 
-                # ── Failover events from Netwatch / route transitions ─────
+                # ── Failover events from Netwatch / pathing transitions ───
                 record_failover_transitions(wan_status, primary_wan, now)
 
                 # ── PCC distribution from active connection marks ─────────
@@ -387,7 +536,8 @@ async def poll():
                     "dhcp_count":      dhcp_count,
                     "pcc":             pcc,
                     "session_summary": dict(state.get("session_summary", {})),
-                    "failover_events": list(state["failover_events"]),
+                    "failover_events": _public_failover_events(),
+                    "failover_event_count": int(state.get("failover_event_count", 0)),
                     "history":         {k: list(v) for k, v in history.items()},
                 }
 

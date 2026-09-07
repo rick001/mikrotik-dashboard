@@ -9,7 +9,7 @@ A lightweight, real-time network monitoring dashboard for MikroTik routers with 
 - **WAN Status** — live UP/DOWN badges, ISP-assigned IPs, gateway ping latency (pinged from the server, not the router)
 - **Interface Traffic** — live Kbps/Mbps speeds, session totals, boot totals, sparkline charts per WAN
 - **PCC Load Distribution** — active connection counts and % split per WAN, derived purely from connection-mark tracking (not mangle counters)
-- **Failover Events** — last 10 WAN up/down and active-route changes, derived from Netwatch status transitions observed by the dashboard
+- **Failover Events** — last 10 WAN up/down events; live detection from Netwatch transitions, with history/count seeded once at startup from filtered RouterOS failover script log lines (not full `/log` polling). Duplicate script log lines for the same WAN state within 5 seconds are collapsed.
 - **Connection Sessions** — TCP, UDP, Established, and New/sec from the connection tracking table
 - **System Health** — CPU gauge, RAM gauge, temperature, active DHCP clients, storage
 - **Combined Throughput** — 5-minute rolling chart with Kbps/Mbps auto-scaling
@@ -143,7 +143,7 @@ Designed to be lightweight on the router:
 |---|---|
 | REST API calls per poll | 8 concurrent (interfaces, resource, health, netwatch, leases, routes, addresses, mangle) |
 | Connection tracking fetch | Every 30s |
-| Failover event source | Netwatch status + active-route transitions (in-process) |
+| Failover event source | Netwatch live transitions; one-shot filtered `/log/print` seed at startup |
 | Router CPU impact | < 1% on hEX (tested on RB750Gr3) |
 | No outbound calls from router | Gateway ping runs from the server, not RouterOS |
 

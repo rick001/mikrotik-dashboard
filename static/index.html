@@ -394,9 +394,9 @@ header {
     </div>
 
     <div class="card">
-      <div class="label">Active Route</div>
+      <div class="label">Pathing</div>
       <div class="primary-val" id="primary-wan">—</div>
-      <div class="wan-since">Preferred Route</div>
+      <div class="wan-since">From Netwatch status</div>
     </div>
 
     <div class="card">
@@ -491,7 +491,10 @@ header {
     </div>
 
     <div class="card">
-      <div class="label" style="margin-bottom:12px">Failover Events</div>
+      <div class="label" style="margin-bottom:12px;display:flex;align-items:center;justify-content:space-between;gap:8px">
+        <span>Failover Events</span>
+        <span id="failover-count" style="font-size:11px;font-weight:600;letter-spacing:0;text-transform:none;color:var(--muted)">0</span>
+      </div>
       <div id="failover-body">
         <div class="no-events">No failover events recorded</div>
       </div>
@@ -813,6 +816,13 @@ function apply(data) {
 
   // Failover events
   const evts = data.failover_events || [];
+  const evtCount = data.failover_event_count ?? evts.length;
+  const countEl = document.getElementById('failover-count');
+  if (countEl) {
+    countEl.textContent = evtCount === 1
+      ? '1 failover'
+      : `${evtCount} failovers`;
+  }
   const fbody = document.getElementById('failover-body');
   if (evts.length === 0) {
     fbody.innerHTML = '<div class="no-events">No failover events recorded</div>';
