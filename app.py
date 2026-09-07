@@ -35,6 +35,11 @@ history: dict[str, deque] = {
     "total_tx":   deque(maxlen=MAX_HISTORY),
 }
 
+WAN_LABELS = {
+    "wan1": "WAN1 · SSWL",
+    "wan2": "WAN2 · JIO",
+}
+
 state: dict = {
     "prev_bytes":         {},
     "prev_time":          None,
@@ -42,6 +47,9 @@ state: dict = {
     "conn_counts":        {"wan1": 0, "wan2": 0},
     "poll_count":         0,
     "latest":             {},
+    "failover_events":    deque(maxlen=10),
+    "prev_wan_snapshot":  None,   # None until first baseline
+    "prev_primary_wan":   None,
 }
 
 
@@ -95,6 +103,66 @@ async def mt_get(client: httpx.AsyncClient, path: str, timeout: float = 4.0):
     except Exception as e:
         logger.warning(f"MT {path} failed: {e}")
     return None
+
+
+def _event_time(now: float) -> str:
+    return time.strftime("%H:%M:%S", time.localtime(now))
+
+
+def _append_failover_event(message: str, now: float) -> None:
+    state["failover_events"].append({
+        "time": _event_time(now),
+        "message": message,
+    })
+
+
+def _wan_snapshot(wan_status: dict) -> dict:
+    snap = {}
+    for key in ("wan1", "wan2"):
+        entry = wan_status.get(key)
+        if entry:
+            snap[key] = {
+                "status": entry.get("status", "unknown"),
+                "since":  entry.get("since", ""),
+            }
+        else:
+            snap[key] = None
+    return snap
+
+
+def record_failover_transitions(wan_status: dict, primary_wan: str, now: float) -> None:
+    """Derive Failover Events from Netwatch + active-route changes."""
+    snap = _wan_snapshot(wan_status)
+    prev = state["prev_wan_snapshot"]
+
+    if prev is None:
+        # Baseline: seed one event per WAN already down (restart mid-outage).
+        for key, label in WAN_LABELS.items():
+            cur = snap.get(key)
+            if cur and cur["status"] == "down":
+                since = cur.get("since") or ""
+                msg = f"{label} DOWN"
+                if since:
+                    msg = f"{msg} (since {since.replace('T', ' ')[:16]})"
+                _append_failover_event(msg, now)
+        state["prev_wan_snapshot"] = snap
+        state["prev_primary_wan"] = primary_wan
+        return
+
+    for key, label in WAN_LABELS.items():
+        cur = snap.get(key)
+        old = prev.get(key)
+        if not cur or not old:
+            continue
+        if cur["status"] != old["status"] and cur["status"] in ("up", "down"):
+            _append_failover_event(f"{label} {cur['status'].upper()}", now)
+
+    prev_primary = state["prev_primary_wan"]
+    if prev_primary is not None and primary_wan != prev_primary:
+        _append_failover_event(f"Active route → {primary_wan}", now)
+
+    state["prev_wan_snapshot"] = snap
+    state["prev_primary_wan"] = primary_wan
 
 
 # ── Main poll loop ──────────────────────────────────────────────────────────
@@ -156,25 +224,6 @@ async def poll():
                             "established": established,
                             "new_per_sec": new_per_sec,
                         }
-
-                # Slow: system log every 3 polls (15 s) for failover events
-                failover_events = state.get("failover_events", [])
-                if pc % 3 == 0:
-                    logs = await mt_get(client, "/log", timeout=5.0)
-                    if logs:
-                        events = []
-                        for entry in logs:
-                            msg = entry.get("message", "")
-                            if "WAN" in msg and (
-                                "DOWN" in msg or "UP" in msg or
-                                "restoring" in msg or "disabling" in msg
-                            ):
-                                events.append({
-                                    "time": entry.get("time", ""),
-                                    "message": msg,
-                                })
-                        failover_events = events[-10:]
-                    state["failover_events"] = failover_events
 
                 dt = (now - state["prev_time"]) if state["prev_time"] else 1.0
 
@@ -311,6 +360,9 @@ async def poll():
                         elif "192.168.29" in gw:
                             primary_wan = "WAN2 · JIO"
 
+                # ── Failover events from Netwatch / route transitions ─────
+                record_failover_transitions(wan_status, primary_wan, now)
+
                 # ── PCC distribution from active connection marks ─────────
                 cc   = dict(state["conn_counts"])
                 w1c  = cc.get("wan1", 0)
@@ -335,7 +387,7 @@ async def poll():
                     "dhcp_count":      dhcp_count,
                     "pcc":             pcc,
                     "session_summary": dict(state.get("session_summary", {})),
-                    "failover_events": list(state.get("failover_events", [])),
+                    "failover_events": list(state["failover_events"]),
                     "history":         {k: list(v) for k, v in history.items()},
                 }
 
